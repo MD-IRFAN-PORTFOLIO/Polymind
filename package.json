@@ -1,0 +1,12 @@
+{
+  "name": "polymind",
+  "private": true,
+  "scripts": {
+    "build": "npm --prefix apps/web run build",
+    "web:build": "npm --prefix apps/web run build"
+  },
+  "dependencies": {
+    "@neon/config": "^1.14.0",
+    "@neon/env": "^2.1.3"
+  }
+}

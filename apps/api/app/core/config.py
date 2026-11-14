@@ -3,11 +3,14 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+
 if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
     DATA_DIR = Path("/tmp/data")
 else:
@@ -19,7 +22,11 @@ class Settings(BaseSettings):
     """Application configuration loaded from environment variables and .env."""
 
     model_config = SettingsConfigDict(
-        env_file=str(BASE_DIR / ".env"),
+        env_file=(
+            str(BASE_DIR / ".env"),
+            str(PROJECT_ROOT / ".env.local"),
+            str(PROJECT_ROOT / ".env"),
+        ),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -28,6 +35,23 @@ class Settings(BaseSettings):
     environment: str = "development"
     database_url: str = f"sqlite+aiosqlite:///{(DATA_DIR / 'app.db').as_posix()}"
     cors_origins: str | list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def normalize_database_url(cls, v: str) -> str:
+        if not v:
+            return f"sqlite+aiosqlite:///{(DATA_DIR / 'app.db').as_posix()}"
+        if v.startswith("postgres://") or v.startswith("postgresql://"):
+            parsed = urlparse(v)
+            scheme = "postgresql+asyncpg"
+            params = parse_qs(parsed.query)
+            params.pop("channel_binding", None)
+            if "sslmode" in params:
+                mode = params.pop("sslmode")[0]
+                params["ssl"] = ["require" if mode in ("require", "verify-ca", "verify-full") else mode]
+            clean_query = urlencode({k: val[0] for k, val in params.items()})
+            return urlunparse((scheme, parsed.netloc, parsed.path, parsed.params, clean_query, parsed.fragment))
+        return v
 
     @field_validator("cors_origins", mode="after")
     @classmethod
