@@ -34,6 +34,17 @@ app.add_middleware(
 app.include_router(api_router)
 
 
+@app.get("/")
+async def root() -> dict[str, str]:
+    return {
+        "app": settings.app_name,
+        "status": "online",
+        "message": "PolyMind Backend API is running successfully.",
+        "docs": "/docs",
+        "health": "/health",
+    }
+
+
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     return {"status": "ok", "app": settings.app_name}
