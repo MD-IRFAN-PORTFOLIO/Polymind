@@ -1,5 +1,6 @@
 from functools import lru_cache
 import json
+import os
 from pathlib import Path
 from typing import Any
 from pydantic import field_validator
@@ -7,7 +8,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = BASE_DIR / "data"
+if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+    DATA_DIR = Path("/tmp/data")
+else:
+    DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
