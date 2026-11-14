@@ -1,0 +1,74 @@
+# ==========================================
+# CRITICAL SECURITY: Never commit secrets or databases
+# ==========================================
+.env
+.env.local
+.env.*.local
+*.env
+*.pem
+*.key
+
+# SQLite Database & Storage (Prevent local keys/chats leakage)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+apps/api/data/*.db
+apps/api/data/*.sqlite*
+data/*.db
+data/*.sqlite*
+apps/api/data/uploads/*
+!apps/api/data/uploads/.gitkeep
+
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+*.whl
+
+# Next.js & Node.js
+node_modules/
+apps/web/node_modules/
+.next/
+apps/web/.next/
+out/
+apps/web/out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Operating System & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Render deployment artifacts
+.render/

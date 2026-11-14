@@ -1,0 +1,46 @@
+# Render Blueprint Configuration (Infrastructure-as-Code)
+# Documentation: https://render.com/docs/blueprint-spec
+
+services:
+  # -------------------------------------------------------------
+  # 1. Backend Service: Python FastAPI
+  # -------------------------------------------------------------
+  - type: web
+    name: polymind-api
+    runtime: python
+    plan: free
+    rootDir: apps/api
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: ENVIRONMENT
+        value: production
+      - key: CORS_ORIGINS
+        value: "*"
+      # Sensitive API keys (Enter via Render dashboard, not in Git)
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+
+  # -------------------------------------------------------------
+  # 2. Frontend Service: Next.js Web App
+  # -------------------------------------------------------------
+  - type: web
+    name: polymind-web
+    runtime: node
+    plan: free
+    rootDir: apps/web
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+      # Points to your deployed FastAPI backend URL: https://<polymind-api-name>.onrender.com/api/v1
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false
