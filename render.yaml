@@ -19,7 +19,7 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: CORS_ORIGINS
-        value: "*"
+        value: '["*"]'
       # Sensitive API keys (Enter via Render dashboard, not in Git)
       - key: GEMINI_API_KEY
         sync: false

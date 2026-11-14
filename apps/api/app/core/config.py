@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     app_name: str = "PolyMind"
     environment: str = "development"
     database_url: str = f"sqlite+aiosqlite:///{(DATA_DIR / 'app.db').as_posix()}"
-    cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    cors_origins: str | list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", mode="after")
     @classmethod
     def parse_cors_origins(cls, v: Any) -> list[str]:
         if isinstance(v, str):
