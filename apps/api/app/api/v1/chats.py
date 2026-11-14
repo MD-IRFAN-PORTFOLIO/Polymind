@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.auth import get_current_user_id
 from app.core.database import get_db
 from app.models.chat import Conversation, Message, Project, Turn, utc_now
 from app.schemas.chat import (
@@ -26,8 +27,15 @@ DEFAULT_MODELS = [
 
 
 @router.get("", response_model=list[ConversationSummary])
-async def list_conversations(db: AsyncSession = Depends(get_db)) -> list[ConversationSummary]:
-    stmt = select(Conversation).order_by(Conversation.updated_at.desc())
+async def list_conversations(
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> list[ConversationSummary]:
+    stmt = (
+        select(Conversation)
+        .where((Conversation.user_id == user_id) | (Conversation.user_id == "local-user"))
+        .order_by(Conversation.updated_at.desc())
+    )
     rows = (await db.execute(stmt)).scalars().all()
     return list(rows)
 
@@ -35,6 +43,7 @@ async def list_conversations(db: AsyncSession = Depends(get_db)) -> list[Convers
 @router.post("", response_model=ConversationDetail, status_code=status.HTTP_201_CREATED)
 async def create_conversation(
     payload: ConversationCreate,
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> ConversationDetail:
     system_prompt = payload.system_prompt
@@ -53,6 +62,7 @@ async def create_conversation(
         title=payload.title,
         system_prompt=system_prompt,
         project_id=payload.project_id,
+        user_id=user_id,
         active_models=active_models,
     )
     db.add(conv)
@@ -71,14 +81,18 @@ async def create_conversation(
 
 
 @router.get("/{conversation_id}", response_model=ConversationDetail)
-async def get_conversation(conversation_id: str, db: AsyncSession = Depends(get_db)) -> ConversationDetail:
+async def get_conversation(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationDetail:
     stmt = (
         select(Conversation)
         .where(Conversation.id == conversation_id)
         .options(selectinload(Conversation.turns).selectinload(Turn.messages))
     )
     conv = (await db.execute(stmt)).scalar_one_or_none()
-    if not conv:
+    if not conv or (conv.user_id != user_id and conv.user_id != "local-user"):
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conv
 
@@ -87,10 +101,11 @@ async def get_conversation(conversation_id: str, db: AsyncSession = Depends(get_
 async def update_conversation(
     conversation_id: str,
     payload: ConversationUpdate,
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> ConversationSummary:
     conv = await db.get(Conversation, conversation_id)
-    if not conv:
+    if not conv or (conv.user_id != user_id and conv.user_id != "local-user"):
         raise HTTPException(status_code=404, detail="Conversation not found")
     if payload.title is not None:
         conv.title = payload.title
@@ -105,9 +120,13 @@ async def update_conversation(
 
 
 @router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_conversation(conversation_id: str, db: AsyncSession = Depends(get_db)) -> None:
+async def delete_conversation(
+    conversation_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> None:
     conv = await db.get(Conversation, conversation_id)
-    if not conv:
+    if not conv or (conv.user_id != user_id and conv.user_id != "local-user"):
         raise HTTPException(status_code=404, detail="Conversation not found")
     await db.delete(conv)
     await db.commit()

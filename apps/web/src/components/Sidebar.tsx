@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { KeyRound, MessageSquarePlus, Trash2, X } from "lucide-react";
 import type { ConversationSummary } from "@/lib/types";
+import { UserAccountNav } from "@/components/UserAccountNav";
 
 interface SidebarProps {
   chats: ConversationSummary[];
@@ -152,7 +153,8 @@ export function Sidebar({
           </div>
         </div>
 
-        <div className="border-t border-slate-800/80 p-3">
+        <div className="space-y-2 border-t border-slate-800/80 p-3">
+          <UserAccountNav />
           <button
             onClick={handleOpenSettings}
             className="flex w-full items-center justify-between rounded-lg border border-slate-700/80 bg-surface-800 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-indigo-500/60 hover:text-white"

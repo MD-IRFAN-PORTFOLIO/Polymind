@@ -12,12 +12,29 @@ import type {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
+let tokenGetter: (() => Promise<string | null>) | null = null;
+
+export function setAuthTokenGetter(fn: () => Promise<string | null>) {
+  tokenGetter = fn;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const isFormData = init?.body instanceof FormData;
   const headers: Record<string, string> = {
     ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...((init?.headers as Record<string, string>) ?? {}),
   };
+
+  if (tokenGetter && !headers["Authorization"]) {
+    try {
+      const token = await tokenGetter();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -90,9 +107,21 @@ export async function streamChatTurn(
   onFrame: (frame: StreamFrame) => void,
   signal?: AbortSignal,
 ): Promise<void> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (tokenGetter) {
+    try {
+      const token = await tokenGetter();
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const res = await fetch(`${API_BASE}/chats/${chatId}/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(payload),
     signal,
   });
