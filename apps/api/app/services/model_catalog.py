@@ -52,18 +52,18 @@ PROVIDERS: dict[str, ProviderMeta] = {
 
 CURATED_MODELS: list[dict] = [
     {
-        "id": "gemini/gemini-3.5-flash",
-        "name": "Gemini 3.5 Flash (Google Free)",
+        "id": "gemini/gemini-flash-lite-latest",
+        "name": "Gemini Flash-Lite (Google Ultra-Fast)",
         "provider": "gemini",
-        "description": "Google's ultra-fast multimodal flagship model with free quota",
+        "description": "Google's lowest-latency model with instant response time and free quota",
         "has_free_tier": True,
         "context_window": 1000000,
     },
     {
-        "id": "gemini/gemini-flash-latest",
-        "name": "Gemini Flash Latest (Google Free)",
+        "id": "gemini/gemini-3.5-flash",
+        "name": "Gemini 3.5 Flash (Google Deep Reasoning)",
         "provider": "gemini",
-        "description": "Google's latest Flash reasoning model with free quota",
+        "description": "Google's deep multimodal reasoning flagship model with free quota",
         "has_free_tier": True,
         "context_window": 1000000,
     },
@@ -157,11 +157,19 @@ def mask_secret(secret: str) -> str:
     return f"{secret[:4]}...{secret[-4:]}"
 
 
-async def resolve_provider_credentials(db: AsyncSession) -> dict[str, tuple[str, str | None]]:
-    """Return mapping of provider_id -> (api_key, base_url), preferring DB keys over .env."""
+async def resolve_provider_credentials(db: AsyncSession, user_id: str = "local-user") -> dict[str, tuple[str, str | None]]:
+    """Return mapping of provider_id -> (api_key, base_url), preferring user's DB keys over default/env."""
     settings = get_settings()
-    rows = (await db.execute(select(ProviderKey))).scalars().all()
-    db_map = {row.provider: row for row in rows}
+    stmt = (
+        select(ProviderKey)
+        .where((ProviderKey.user_id == user_id) | (ProviderKey.user_id == "local-user"))
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    # Prioritize user-specific key over default local-user
+    db_map: dict[str, ProviderKey] = {}
+    for row in rows:
+        if row.provider not in db_map or row.user_id == user_id:
+            db_map[row.provider] = row
 
     resolved: dict[str, tuple[str, str | None]] = {}
     for pid, meta in PROVIDERS.items():
@@ -177,8 +185,8 @@ async def resolve_provider_credentials(db: AsyncSession) -> dict[str, tuple[str,
     return resolved
 
 
-async def list_provider_statuses(db: AsyncSession) -> list[ProviderStatus]:
-    creds = await resolve_provider_credentials(db)
+async def list_provider_statuses(db: AsyncSession, user_id: str = "local-user") -> list[ProviderStatus]:
+    creds = await resolve_provider_credentials(db, user_id=user_id)
     statuses: list[ProviderStatus] = []
     for pid, meta in PROVIDERS.items():
         key, base_url = creds.get(pid, ("", None))
@@ -197,8 +205,8 @@ async def list_provider_statuses(db: AsyncSession) -> list[ProviderStatus]:
     return statuses
 
 
-async def list_models(db: AsyncSession) -> list[ModelInfo]:
-    statuses = {s.provider: s.is_configured for s in await list_provider_statuses(db)}
+async def list_models(db: AsyncSession, user_id: str = "local-user") -> list[ModelInfo]:
+    statuses = {s.provider: s.is_configured for s in await list_provider_statuses(db, user_id=user_id)}
     return [
         ModelInfo(**item, is_configured=statuses.get(item["provider"], False))
         for item in CURATED_MODELS

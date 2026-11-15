@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Columns,
   Database,
+  Download,
   LayoutGrid,
   Layers,
   PanelLeft,
@@ -21,12 +22,14 @@ interface ModelPickerBarProps {
   activeKbCount: number;
   layoutMode: LayoutMode;
   sidebarOpen?: boolean;
+  hasTurns?: boolean;
   onToggleSidebar?: () => void;
   onSelectLayoutMode: (mode: LayoutMode) => void;
   onToggleModel: (modelId: string) => void;
   onAddCustomModel: (modelId: string) => void;
   onUpdateSystemPrompt: (value: string) => void;
   onOpenKnowledgeModal: () => void;
+  onExportChat?: (format: "markdown" | "json") => void;
 }
 
 export function ModelPickerBar({
@@ -36,15 +39,18 @@ export function ModelPickerBar({
   activeKbCount,
   layoutMode,
   sidebarOpen,
+  hasTurns,
   onToggleSidebar,
   onSelectLayoutMode,
   onToggleModel,
   onAddCustomModel,
   onUpdateSystemPrompt,
   onOpenKnowledgeModal,
+  onExportChat,
 }: ModelPickerBarProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [sysOpen, setSysOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [customId, setCustomId] = useState("");
 
   const handleAddCustom = () => {
@@ -278,6 +284,48 @@ export function ModelPickerBar({
             <SlidersHorizontal className="h-3.5 w-3.5" />
             <span className="hidden lg:inline">System Instructions</span>
           </button>
+
+          {/* Export Chat dropdown */}
+          {hasTurns && onExportChat && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setExportOpen((v) => !v)}
+                className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-surface-800 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:text-white"
+                title="Export Conversation"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Export</span>
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </button>
+              {exportOpen && (
+                <div className="absolute right-0 top-full mt-1.5 w-48 rounded-xl border border-slate-700 bg-surface-900 p-1.5 shadow-2xl z-50">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onExportChat("markdown");
+                      setExportOpen(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-200 hover:bg-surface-800 hover:text-white transition"
+                  >
+                    <span>📄</span>
+                    <span>Export Markdown (.md)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onExportChat("json");
+                      setExportOpen(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-slate-200 hover:bg-surface-800 hover:text-white transition"
+                  >
+                    <span>📦</span>
+                    <span>Export JSON (.json)</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

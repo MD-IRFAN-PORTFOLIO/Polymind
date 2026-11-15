@@ -20,6 +20,7 @@ class ProviderKey(Base):
 
     __tablename__ = "provider_keys"
 
+    user_id: Mapped[str] = mapped_column(String(64), primary_key=True, default="local-user")
     provider: Mapped[str] = mapped_column(String(64), primary_key=True)
     api_key: Mapped[str] = mapped_column(Text, default="")
     base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)

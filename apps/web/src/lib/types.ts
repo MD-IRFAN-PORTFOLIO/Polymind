@@ -62,6 +62,10 @@ export interface Message {
   ttft_ms: number | null;
   total_ms: number | null;
   created_at: string;
+  failover?: {
+    original_model_id: string;
+    reason: string;
+  };
 }
 
 export interface Turn {
@@ -126,6 +130,16 @@ export type StreamFrame =
         message_id: string;
         model_id: string;
         error: string;
+      };
+    }
+  | {
+      event: "model_failover";
+      data: {
+        turn_id: string;
+        message_id: string;
+        original_model_id: string;
+        fallback_model_id: string;
+        reason: string;
       };
     }
   | {

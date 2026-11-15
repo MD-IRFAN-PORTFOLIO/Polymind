@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.auth import get_current_user_id
 from app.core.config import DATA_DIR
 from app.core.database import get_db
 from app.models.chat import new_uuid
@@ -27,8 +28,16 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.get("/knowledge-bases", response_model=list[KnowledgeBaseDetail])
-async def list_knowledge_bases(db: AsyncSession = Depends(get_db)) -> list[KnowledgeBaseDetail]:
-    stmt = select(KnowledgeBase).options(selectinload(KnowledgeBase.documents)).order_by(KnowledgeBase.created_at.desc())
+async def list_knowledge_bases(
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> list[KnowledgeBaseDetail]:
+    stmt = (
+        select(KnowledgeBase)
+        .where((KnowledgeBase.user_id == user_id) | (KnowledgeBase.user_id == "local-user"))
+        .options(selectinload(KnowledgeBase.documents))
+        .order_by(KnowledgeBase.created_at.desc())
+    )
     rows = (await db.execute(stmt)).scalars().all()
     return list(rows)
 
@@ -36,9 +45,10 @@ async def list_knowledge_bases(db: AsyncSession = Depends(get_db)) -> list[Knowl
 @router.post("/knowledge-bases", response_model=KnowledgeBaseDetail, status_code=status.HTTP_201_CREATED)
 async def create_knowledge_base(
     payload: KnowledgeBaseCreate,
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeBaseDetail:
-    kb = KnowledgeBase(name=payload.name, description=payload.description)
+    kb = KnowledgeBase(name=payload.name, description=payload.description, user_id=user_id)
     db.add(kb)
     await db.commit()
     await db.refresh(kb)
@@ -52,18 +62,26 @@ async def create_knowledge_base(
 
 
 @router.get("/knowledge-bases/{kb_id}", response_model=KnowledgeBaseDetail)
-async def get_knowledge_base(kb_id: str, db: AsyncSession = Depends(get_db)) -> KnowledgeBaseDetail:
+async def get_knowledge_base(
+    kb_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeBaseDetail:
     stmt = select(KnowledgeBase).where(KnowledgeBase.id == kb_id).options(selectinload(KnowledgeBase.documents))
     kb = (await db.execute(stmt)).scalar_one_or_none()
-    if not kb:
+    if not kb or (kb.user_id != user_id and kb.user_id != "local-user"):
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     return kb
 
 
 @router.delete("/knowledge-bases/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_knowledge_base(kb_id: str, db: AsyncSession = Depends(get_db)) -> None:
+async def delete_knowledge_base(
+    kb_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> None:
     kb = await db.get(KnowledgeBase, kb_id)
-    if not kb:
+    if not kb or (kb.user_id != user_id and kb.user_id != "local-user"):
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     await db.delete(kb)
     await db.commit()
@@ -74,6 +92,7 @@ async def upload_document(
     file: UploadFile = File(...),
     knowledge_base_id: str | None = Form(None),
     conversation_id: str | None = Form(None),
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> DocumentSummary:
     """Upload a file, extract content, chunk it, generate embeddings, and index for RAG."""
@@ -91,7 +110,7 @@ async def upload_document(
     chunk_texts = [c["content"] for c in chunks_meta]
 
     # 2. Embed
-    credentials = await resolve_provider_credentials(db)
+    credentials = await resolve_provider_credentials(db, user_id=user_id)
     embeddings = await generate_embeddings(chunk_texts, credentials)
 
     # 3. Persist Document & DocumentChunks
@@ -145,10 +164,11 @@ async def delete_document(doc_id: str, db: AsyncSession = Depends(get_db)) -> No
 @router.post("/rag/search", response_model=list[RAGSearchResult])
 async def search_rag(
     payload: RAGSearchRequest,
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> list[RAGSearchResult]:
     """Inspect top-K retrieved chunks for a test query."""
-    credentials = await resolve_provider_credentials(db)
+    credentials = await resolve_provider_credentials(db, user_id=user_id)
     results = await hybrid_retrieve(
         db=db,
         query=payload.query,

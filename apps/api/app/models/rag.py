@@ -12,6 +12,7 @@ class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id: Mapped[str] = mapped_column(String(64), default="local-user", index=True)
     name: Mapped[str] = mapped_column(String(120))
     description: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

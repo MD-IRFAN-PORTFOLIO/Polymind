@@ -20,6 +20,8 @@ OPENAI_COMPATIBLE_BASE_URLS: dict[str, str] = {
 
 ESTIMATED_COST_PER_1M_TOKENS: dict[str, tuple[float, float]] = {
     # model_prefix: (input_cost_per_1M, output_cost_per_1M)
+    "gemini/gemini-flash-lite-latest": (0.0375, 0.15),
+    "gemini/gemini-3.5-flash-lite": (0.0375, 0.15),
     "gemini/gemini-3.5-flash": (0.075, 0.30),
     "gemini/gemini-2.5-flash": (0.075, 0.30),
     "gemini/gemini-2.5-pro": (1.25, 5.00),
@@ -144,6 +146,19 @@ async def stream_model_completion(
         )
 
 
+_shared_client: httpx.AsyncClient | None = None
+
+
+def get_shared_client() -> httpx.AsyncClient:
+    """Return persistent, connection-pooled AsyncClient to eliminate SSL/TLS handshake latency."""
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        limits = httpx.Limits(max_keepalive_connections=50, max_connections=100, keepalive_expiry=60.0)
+        timeout = httpx.Timeout(90.0, connect=10.0, read=90.0)
+        _shared_client = httpx.AsyncClient(limits=limits, timeout=timeout)
+    return _shared_client
+
+
 async def _stream_openai_compatible(
     model_id: str,
     provider: str,
@@ -177,8 +192,8 @@ async def _stream_openai_compatible(
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(90.0, connect=15.0)) as client:
-        async with client.stream("POST", url, headers=headers, json=payload) as response:
+    client = get_shared_client()
+    async with client.stream("POST", url, headers=headers, json=payload) as response:
             if response.status_code != 200:
                 err_bytes = await response.aread()
                 err_msg = err_bytes.decode(errors="replace")
@@ -272,8 +287,8 @@ async def _stream_anthropic(
     if system_text:
         payload["system"] = system_text
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(90.0, connect=15.0)) as client:
-        async with client.stream("POST", url, headers=headers, json=payload) as response:
+    client = get_shared_client()
+    async with client.stream("POST", url, headers=headers, json=payload) as response:
             if response.status_code != 200:
                 err_bytes = await response.aread()
                 yield StreamEvent(type="error", model_id=model_id, error=f"HTTP {response.status_code}: {err_bytes.decode()[:240]}")

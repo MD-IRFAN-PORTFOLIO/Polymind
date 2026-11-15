@@ -1,5 +1,6 @@
 import json
 from collections.abc import AsyncIterator
+import jwt
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -132,3 +133,95 @@ async def test_multi_model_streaming_and_winner_selection(client: AsyncClient, m
         },
     )
     assert "turns=3" in stream_res_2.text
+
+
+@pytest.mark.asyncio
+async def test_multi_user_isolation(client: AsyncClient):
+    auth_a = {"Authorization": f"Bearer {jwt.encode({'sub': 'user_alpha'}, 'secret', algorithm='HS256')}"}
+    auth_b = {"Authorization": f"Bearer {jwt.encode({'sub': 'user_beta'}, 'secret', algorithm='HS256')}"}
+
+    # 1. Projects isolation
+    proj_a = (
+        await client.post(
+            "/api/v1/projects",
+            json={"name": "Alpha Private Project", "system_prompt": "Alpha instructions"},
+            headers=auth_a,
+        )
+    ).json()
+
+    projs_b = (await client.get("/api/v1/projects", headers=auth_b)).json()
+    assert not any(p["id"] == proj_a["id"] for p in projs_b)
+
+    del_res = await client.delete(f"/api/v1/projects/{proj_a['id']}", headers=auth_b)
+    assert del_res.status_code == 404
+
+    # 2. Per-user cloud provider keys isolation
+    await client.put(
+        "/api/v1/providers/keys",
+        json={"provider": "groq", "api_key": "gsk_alpha_111122223333"},
+        headers=auth_a,
+    )
+    await client.put(
+        "/api/v1/providers/keys",
+        json={"provider": "groq", "api_key": "gsk_beta_888899990000"},
+        headers=auth_b,
+    )
+
+    provs_a = (await client.get("/api/v1/providers", headers=auth_a)).json()
+    provs_b = (await client.get("/api/v1/providers", headers=auth_b)).json()
+
+    groq_a = next(p for p in provs_a if p["provider"] == "groq")
+    groq_b = next(p for p in provs_b if p["provider"] == "groq")
+
+    assert groq_a["masked_key"] == "gsk_...3333"
+    assert groq_b["masked_key"] == "gsk_...0000"
+
+    # 3. Knowledge base isolation
+    kb_a = (
+        await client.post(
+            "/api/v1/knowledge-bases",
+            json={"name": "Alpha Private KB", "description": "Confidential files"},
+            headers=auth_a,
+        )
+    ).json()
+
+    kbs_b = (await client.get("/api/v1/knowledge-bases", headers=auth_b)).json()
+    assert not any(k["id"] == kb_a["id"] for k in kbs_b)
+
+    del_kb_res = await client.delete(f"/api/v1/knowledge-bases/{kb_a['id']}", headers=auth_b)
+    assert del_kb_res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_model_auto_failover_on_rate_limit(client: AsyncClient, monkeypatch):
+    import app.services.orchestrator as orch_mod
+
+    async def fake_stream_with_failover(model_id, messages, credentials, temperature=0.7, max_tokens=None):
+        if model_id == "groq/qwen/qwen3.8-27b":
+            yield StreamEvent(type="error", model_id=model_id, error="HTTP 429: Rate limit reached. Please retry later.")
+            return
+        yield StreamEvent(type="delta", model_id=model_id, delta="Recovered response from backup model!")
+        yield StreamEvent(type="done", model_id=model_id, input_tokens=10, output_tokens=20, cost_usd=0.0, ttft_ms=50, total_ms=100)
+
+    monkeypatch.setattr(orch_mod, "stream_model_completion", fake_stream_with_failover)
+
+    chat = (await client.post("/api/v1/chats", json={"title": "Test Failover"})).json()
+    chat_id = chat["id"]
+
+    stream_res = await client.post(
+        f"/api/v1/chats/{chat_id}/stream",
+        json={"prompt": "Explain Quantum Computing", "models": ["groq/qwen/qwen3.8-27b"]},
+    )
+    assert stream_res.status_code == 200
+    body = stream_res.text
+    assert "event: model_failover" in body
+    assert "groq/openai/gpt-oss-120b" in body
+    assert "event: model_done" in body
+    assert "event: stream_complete" in body
+
+    chat_detail = (await client.get(f"/api/v1/chats/{chat_id}")).json()
+    turn = chat_detail["turns"][0]
+    assert turn["messages"][1]["model_id"] == "groq/openai/gpt-oss-120b"
+    assert turn["messages"][1]["status"] == "completed"
+    assert "Recovered response from backup model!" in turn["messages"][1]["content"]
+

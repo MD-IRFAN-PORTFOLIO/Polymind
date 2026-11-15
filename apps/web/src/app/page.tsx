@@ -23,7 +23,7 @@ import type {
 } from "@/lib/types";
 
 const FALLBACK_MODELS = [
-  "gemini/gemini-3.5-flash",
+  "gemini/gemini-flash-lite-latest",
   "groq/qwen/qwen3.8-27b",
   "openrouter/nvidia/nemotron-3.5-lightning:free",
 ];
@@ -80,12 +80,25 @@ export default function HomePage() {
       if (saved === "columns" || saved === "grid" || saved === "tabs") {
         setLayoutMode(saved);
       }
-      if (window.innerWidth < 768) {
+      const savedSidebar = localStorage.getItem("polymind_sidebar_open");
+      if (savedSidebar !== null) {
+        setSidebarOpen(savedSidebar === "true");
+      } else if (window.innerWidth < 768) {
         setSidebarOpen(false);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleToggleSidebar = () => {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        localStorage.setItem("polymind_sidebar_open", String(next));
+      }
+      return next;
+    });
+  };
 
   const handleSelectLayoutMode = (mode: LayoutMode) => {
     setLayoutMode(mode);
@@ -257,6 +270,31 @@ export default function HomePage() {
         return { ...prev, turns: [...prev.turns, newTurn] };
       }
 
+      if (frame.event === "model_failover") {
+        return {
+          ...prev,
+          turns: prev.turns.map((t) =>
+            t.id !== frame.data.turn_id
+              ? t
+              : {
+                  ...t,
+                  messages: t.messages.map((m) =>
+                    m.id === frame.data.message_id
+                      ? {
+                          ...m,
+                          model_id: frame.data.fallback_model_id,
+                          failover: {
+                            original_model_id: frame.data.original_model_id,
+                            reason: frame.data.reason,
+                          },
+                        }
+                      : m,
+                  ),
+                },
+          ),
+        };
+      }
+
       if (frame.event === "chunk") {
         return {
           ...prev,
@@ -385,6 +423,59 @@ export default function HomePage() {
     abortRef.current?.abort();
   };
 
+  const handleExportChat = (format: "markdown" | "json") => {
+    if (!activeChat || activeChat.turns.length === 0) return;
+
+    const safeTitle = (activeChat.title || "conversation").replace(/[^a-zA-Z0-9_-]/g, "_");
+
+    if (format === "json") {
+      const dataStr = JSON.stringify(activeChat, null, 2);
+      const blob = new Blob([dataStr], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${safeTitle}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
+
+    let md = `# ${activeChat.title || "PolyMind Chat"}\n\n`;
+    if (activeChat.system_prompt) {
+      md += `> **System Prompt:** ${activeChat.system_prompt}\n\n---\n\n`;
+    }
+
+    activeChat.turns.forEach((turn, idx) => {
+      const userMsg = turn.messages.find((m) => m.role === "user");
+      const assistantMsgs = turn.messages.filter((m) => m.role === "assistant");
+
+      md += `## Turn ${idx + 1}\n\n`;
+      if (userMsg) {
+        md += `### 👤 User Prompt\n${userMsg.content}\n\n`;
+      }
+
+      md += `### 🤖 Model Responses\n\n`;
+      assistantMsgs.forEach((msg) => {
+        const isWinner = turn.selected_response_id === msg.id;
+        md += `#### ${msg.model_id} ${isWinner ? "🏆 (Chosen Winner)" : ""}\n\n`;
+        md += `${msg.content}\n\n`;
+        const totalTokens = (msg.input_tokens || 0) + (msg.output_tokens || 0);
+        if (totalTokens || msg.total_ms) {
+          md += `*Stats: ${totalTokens} tokens | ${msg.total_ms || 0}ms*\n\n`;
+        }
+      });
+      md += `---\n\n`;
+    });
+
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${safeTitle}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const configuredCount = providers.filter((p) => p.is_configured).length;
 
   return (
@@ -409,12 +500,14 @@ export default function HomePage() {
           activeKbCount={activeKbIds.length}
           layoutMode={layoutMode}
           sidebarOpen={sidebarOpen}
-          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          hasTurns={(activeChat?.turns?.length ?? 0) > 0}
+          onToggleSidebar={handleToggleSidebar}
           onSelectLayoutMode={handleSelectLayoutMode}
           onToggleModel={handleToggleModel}
           onAddCustomModel={handleAddCustomModel}
           onUpdateSystemPrompt={setSystemPrompt}
           onOpenKnowledgeModal={() => setKbModalOpen(true)}
+          onExportChat={handleExportChat}
         />
 
         {errorBanner && (

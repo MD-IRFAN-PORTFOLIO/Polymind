@@ -14,6 +14,69 @@ from app.services.model_catalog import resolve_provider_credentials
 from app.services.rag.retriever import build_grounded_rag_prompt, hybrid_retrieve
 
 
+MODEL_FAILOVER_CHAIN: dict[str, list[str]] = {
+    "gemini/gemini-flash-lite-latest": [
+        "openrouter/google/gemma-4-31b-it:free",
+        "groq/qwen/qwen3.8-27b",
+        "openrouter/nvidia/nemotron-3.5-lightning:free",
+    ],
+    "gemini/gemini-3.5-flash": [
+        "gemini/gemini-flash-lite-latest",
+        "openrouter/google/gemma-4-31b-it:free",
+        "groq/qwen/qwen3.8-27b",
+    ],
+    "groq/qwen/qwen3.8-27b": [
+        "groq/openai/gpt-oss-120b",
+        "openrouter/nvidia/nemotron-3.5-lightning:free",
+        "openrouter/google/gemma-4-31b-it:free",
+    ],
+    "groq/openai/gpt-oss-120b": [
+        "groq/openai/gpt-oss-20b",
+        "openrouter/google/gemma-4-26b-a4b-it:free",
+        "groq/qwen/qwen3.8-27b",
+    ],
+    "groq/openai/gpt-oss-20b": [
+        "groq/qwen/qwen3.8-27b",
+        "openrouter/liquid/lfm-3-1.7b:free",
+    ],
+    "openrouter/nvidia/nemotron-3.5-lightning:free": [
+        "openrouter/google/gemma-4-31b-it:free",
+        "groq/qwen/qwen3.8-27b",
+        "openrouter/liquid/lfm-3-1.7b:free",
+    ],
+    "openrouter/google/gemma-4-31b-it:free": [
+        "openrouter/nvidia/nemotron-3.5-lightning:free",
+        "groq/qwen/qwen3.8-27b",
+    ],
+}
+
+
+def is_failover_candidate(error_msg: str | None) -> bool:
+    """Determine whether an error (rate limit, quota, timeout, 5xx overload) justifies auto-failover."""
+    if not error_msg:
+        return False
+    lower = error_msg.lower()
+    return any(
+        term in lower
+        for term in [
+            "429",
+            "rate limit",
+            "ratelimit",
+            "quota",
+            "resource_exhausted",
+            "overloaded",
+            "503",
+            "502",
+            "504",
+            "not found",
+            "404",
+            "timeout",
+            "timed out",
+            "no longer available",
+        ]
+    )
+
+
 def format_sse(event: str, data: dict[str, Any]) -> str:
     """Format an SSE frame with explicit event name and JSON payload."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
@@ -69,7 +132,7 @@ async def stream_multi_model_turn(
 
     # Deduplicate while preserving model selection order
     target_models = list(dict.fromkeys(models))
-    credentials = await resolve_provider_credentials(db)
+    credentials = await resolve_provider_credentials(db, user_id=conversation.user_id)
 
     # 1. RAG Retrieval Step (Runs once across all models)
     retrieved_chunks = await hybrid_retrieve(
@@ -136,15 +199,64 @@ async def stream_multi_model_turn(
     final_events: dict[str, StreamEvent] = {}
 
     async def _run_single_model(model_id: str) -> None:
-        async for ev in stream_model_completion(
-            model_id=model_id,
-            messages=history_messages,
-            credentials=credentials,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        ):
-            await queue.put((model_id, ev))
-        await queue.put((model_id, None))
+        current_model = model_id
+        tried_models = {model_id}
+
+        while True:
+            has_emitted_delta = False
+            last_error: StreamEvent | None = None
+
+            async for ev in stream_model_completion(
+                model_id=current_model,
+                messages=history_messages,
+                credentials=credentials,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            ):
+                if ev.type == "delta":
+                    has_emitted_delta = True
+                    await queue.put((model_id, ev))
+                elif ev.type == "done":
+                    await queue.put((model_id, ev))
+                    await queue.put((model_id, None))
+                    return
+                elif ev.type == "error":
+                    last_error = ev
+                    break
+
+            if last_error:
+                # If no chunks were emitted yet and error is a failover candidate, try fallback model
+                if not has_emitted_delta and is_failover_candidate(last_error.error):
+                    candidates = MODEL_FAILOVER_CHAIN.get(current_model, [])
+                    fallback = next(
+                        (
+                            m for m in candidates
+                            if m not in target_models and m not in tried_models
+                        ),
+                        None,
+                    )
+                    if fallback:
+                        tried_models.add(fallback)
+                        failover_ev = StreamEvent(
+                            type="failover",
+                            model_id=model_id,
+                            extra={
+                                "original_model_id": current_model,
+                                "fallback_model_id": fallback,
+                                "reason": last_error.error or "Rate limit / quota exceeded",
+                            },
+                        )
+                        await queue.put((model_id, failover_ev))
+                        current_model = fallback
+                        continue
+
+                # No fallback possible, forward the error
+                await queue.put((model_id, last_error))
+                await queue.put((model_id, None))
+                return
+
+            await queue.put((model_id, None))
+            return
 
     tasks = [asyncio.create_task(_run_single_model(mid)) for mid in target_models]
     finished_count = 0
@@ -163,6 +275,21 @@ async def stream_multi_model_turn(
                     "chunk",
                     {"turn_id": turn.id, "message_id": msg_id, "model_id": model_id, "delta": ev.delta},
                 )
+            elif ev.type == "failover":
+                fallback_id = ev.extra["fallback_model_id"]
+                original_id = ev.extra["original_model_id"]
+                # Update model_id on stub so subsequent stream chunks & DB persistence use the fallback
+                assistant_msgs[model_id].model_id = fallback_id
+                yield format_sse(
+                    "model_failover",
+                    {
+                        "turn_id": turn.id,
+                        "message_id": msg_id,
+                        "original_model_id": original_id,
+                        "fallback_model_id": fallback_id,
+                        "reason": ev.extra["reason"],
+                    },
+                )
             elif ev.type == "done":
                 final_events[model_id] = ev
                 yield format_sse(
@@ -170,7 +297,7 @@ async def stream_multi_model_turn(
                     {
                         "turn_id": turn.id,
                         "message_id": msg_id,
-                        "model_id": model_id,
+                        "model_id": assistant_msgs[model_id].model_id or model_id,
                         "input_tokens": ev.input_tokens,
                         "output_tokens": ev.output_tokens,
                         "cost_usd": ev.cost_usd,
@@ -185,7 +312,7 @@ async def stream_multi_model_turn(
                     {
                         "turn_id": turn.id,
                         "message_id": msg_id,
-                        "model_id": model_id,
+                        "model_id": assistant_msgs[model_id].model_id or model_id,
                         "error": ev.error,
                     },
                 )
@@ -201,6 +328,7 @@ async def stream_multi_model_turn(
                 db_msg = await save_db.get(Message, stub.id)
                 if not db_msg:
                     continue
+                db_msg.model_id = stub.model_id
                 ev = final_events.get(model_id)
                 db_msg.content = "".join(buffers[model_id])
                 if ev and ev.type == "done":

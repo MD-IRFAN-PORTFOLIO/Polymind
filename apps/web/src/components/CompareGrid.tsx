@@ -93,6 +93,14 @@ export function CompareGrid({
                 Streaming
               </span>
             )}
+            {msg.failover && (
+              <span
+                className="flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 text-[10px] font-medium text-amber-300"
+                title={`Auto-swapped from ${msg.failover.original_model_id}: ${msg.failover.reason}`}
+              >
+                <span>⚡ Auto-Swapped</span>
+              </span>
+            )}
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">

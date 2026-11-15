@@ -30,8 +30,33 @@ async def get_db() -> AsyncIterator[AsyncSession]:
 
 
 async def init_db() -> None:
-    """Create database tables if they do not exist."""
+    """Create database tables if they do not exist and ensure schema consistency."""
+    from sqlalchemy import text
     from app import models  # noqa: F401 - ensures models are registered on Base.metadata
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        if engine.dialect.name == "postgresql":
+            try:
+                await conn.execute(text("ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS user_id VARCHAR(64) DEFAULT 'local-user'"))
+            except Exception:
+                pass
+            try:
+                await conn.execute(text("ALTER TABLE provider_keys ADD COLUMN IF NOT EXISTS user_id VARCHAR(64) DEFAULT 'local-user'"))
+                await conn.execute(text("""
+                    DO $$ 
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM pg_constraint 
+                            WHERE conname = 'provider_keys_pkey' AND contype = 'p'
+                        ) THEN
+                            IF (SELECT count(*) FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey) WHERE c.conname = 'provider_keys_pkey') = 1 THEN
+                                ALTER TABLE provider_keys DROP CONSTRAINT provider_keys_pkey;
+                                ALTER TABLE provider_keys ADD CONSTRAINT provider_keys_pkey PRIMARY KEY (user_id, provider);
+                            END IF;
+                        END IF;
+                    END $$;
+                """))
+            except Exception:
+                pass
