@@ -7,24 +7,33 @@ import { UserButton, useUser } from "@clerk/nextjs";
 
 export function UserAccountNav() {
   const isClerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
-  const { isLoaded, isSignedIn, user } = useUser();
 
   if (!isClerkEnabled) {
-    return (
-      <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-surface-800 px-3 py-2 text-xs text-slate-400">
-        <span className="flex items-center gap-2">
-          <User className="h-3.5 w-3.5 text-slate-400" />
-          <span>Guest Mode (Local)</span>
-        </span>
-        <Link
-          href="/sign-in"
-          className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300"
-        >
-          Sign In / Register
-        </Link>
-      </div>
-    );
+    return <GuestAccountNav />;
   }
+
+  return <ClerkAccountNav />;
+}
+
+function GuestAccountNav() {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-slate-800 bg-surface-800 px-3 py-2 text-xs text-slate-400">
+      <span className="flex items-center gap-2">
+        <User className="h-3.5 w-3.5 text-slate-400" />
+        <span>Guest Mode (Local)</span>
+      </span>
+      <Link
+        href="/sign-in"
+        className="text-[11px] font-semibold text-indigo-400 hover:text-indigo-300"
+      >
+        Sign In / Register
+      </Link>
+    </div>
+  );
+}
+
+function ClerkAccountNav() {
+  const { isLoaded, isSignedIn, user } = useUser();
 
   if (!isLoaded) {
     return (
