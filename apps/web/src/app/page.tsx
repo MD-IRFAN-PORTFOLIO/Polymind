@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAppAuth } from "@/components/AuthProvider";
 import { CitationDrawer } from "@/components/CitationDrawer";
 import { CompareGrid } from "@/components/CompareGrid";
 import { KnowledgeBaseModal } from "@/components/KnowledgeBaseModal";
@@ -29,6 +31,8 @@ const FALLBACK_MODELS = [
 ];
 
 export default function HomePage() {
+  const router = useRouter();
+  const { isSignedIn } = useAppAuth();
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [chats, setChats] = useState<ConversationSummary[]>([]);
@@ -208,6 +212,10 @@ export default function HomePage() {
   };
 
   const handleBoostPrompt = async () => {
+    if (!isSignedIn) {
+      router.push("/sign-in");
+      return;
+    }
     if (!promptInput.trim()) return;
     setIsBoosting(true);
     setErrorBanner(null);
@@ -376,6 +384,10 @@ export default function HomePage() {
   };
 
   const handleSend = async () => {
+    if (!isSignedIn) {
+      router.push("/sign-in");
+      return;
+    }
     const promptText = promptInput.trim();
     if (!promptText || selectedModels.length === 0) return;
 

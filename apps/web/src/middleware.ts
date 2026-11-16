@@ -13,13 +13,15 @@ const isPublicRoute = createRouteMatcher([
   "/icon.png",
 ]);
 
-const hasClerkKey = Boolean(
-  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
-  process.env.CLERK_PUBLISHABLE_KEY
+// Clerk requires both Publishable Key AND Secret Key to run middleware safely
+const hasClerkKeys = Boolean(
+  (process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+    process.env.CLERK_PUBLISHABLE_KEY) &&
+  process.env.CLERK_SECRET_KEY
 );
 
 let clerkHandler: any = null;
-if (hasClerkKey) {
+if (hasClerkKeys) {
   try {
     clerkHandler = clerkMiddleware(async (auth, req) => {
       // Public routes do not require login
@@ -33,7 +35,7 @@ if (hasClerkKey) {
 }
 
 export default async function middleware(req: NextRequest, event: NextFetchEvent) {
-  if (!hasClerkKey || !clerkHandler) {
+  if (!hasClerkKeys || !clerkHandler) {
     return NextResponse.next();
   }
   try {

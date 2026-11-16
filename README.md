@@ -1,5 +1,6 @@
 # PolyMind — Multi-AI Comparison & Grounded RAG Platform
 
+> **Developed & Maintained by:** Mohammed Irfan  
 > **Vision:** Bring the world's top free-tier LLMs (Google Gemini, Groq, OpenRouter, and local Ollama) into one unified workspace with side-by-side comparison, grounded RAG citations, and one-click Prompt Boost.
 
 ---

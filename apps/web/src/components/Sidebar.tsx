@@ -172,6 +172,10 @@ export function Sidebar({
                 {configuredCount} ready
               </span>
             </button>
+            <div className="pt-1.5 text-center text-[10px] text-slate-500">
+              Developed &amp; Maintained by{" "}
+              <span className="font-semibold text-slate-300">Mohammed Irfan</span>
+            </div>
           </div>
         </div>
       </aside>

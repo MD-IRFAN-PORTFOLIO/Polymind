@@ -5,6 +5,19 @@ from typing import Any
 
 import httpx
 
+_rag_client: httpx.AsyncClient | None = None
+_embedding_cache: dict[str, list[float]] = {}
+MAX_CACHE_SIZE = 1000
+
+
+def get_rag_client() -> httpx.AsyncClient:
+    """Return persistent, pooled HTTP client for embedding API requests."""
+    global _rag_client
+    if _rag_client is None or _rag_client.is_closed:
+        limits = httpx.Limits(max_keepalive_connections=20, max_connections=50, keepalive_expiry=60.0)
+        _rag_client = httpx.AsyncClient(timeout=10.0, limits=limits)
+    return _rag_client
+
 
 async def generate_embeddings(
     texts: list[str],
@@ -14,49 +27,78 @@ async def generate_embeddings(
     if not texts:
         return []
 
+    # Check cache for any cached texts
+    uncached_indices: list[int] = []
+    uncached_texts: list[str] = []
+    results: list[list[float] | None] = [None] * len(texts)
+
+    for i, t in enumerate(texts):
+        key = hashlib.md5(t.encode("utf-8")).hexdigest()
+        if key in _embedding_cache:
+            results[i] = _embedding_cache[key]
+        else:
+            uncached_indices.append(i)
+            uncached_texts.append(t)
+
+    if not uncached_texts:
+        return [r for r in results if r is not None]
+
+    # Generate embeddings for uncached texts
+    generated_vectors: list[list[float]] | None = None
+
     # 1. Try OpenAI text-embedding-3-small if configured
     openai_key, _ = credentials.get("openai", ("", None))
     if openai_key and len(openai_key) > 10:
         try:
-            return await _get_openai_embeddings(texts, openai_key)
+            generated_vectors = await _get_openai_embeddings(uncached_texts, openai_key)
         except Exception:
-            pass
+            generated_vectors = None
 
     # 2. Try Gemini text-embedding-004 if configured
-    gemini_key, _ = credentials.get("gemini", ("", None))
-    if gemini_key and len(gemini_key) > 10:
-        try:
-            return await _get_gemini_embeddings(texts, gemini_key)
-        except Exception:
-            pass
+    if generated_vectors is None:
+        gemini_key, _ = credentials.get("gemini", ("", None))
+        if gemini_key and len(gemini_key) > 10:
+            try:
+                generated_vectors = await _get_gemini_embeddings(uncached_texts, gemini_key)
+            except Exception:
+                generated_vectors = None
 
-    # 3. Deterministic Local Hashing Vectorizer (100% offline, zero external calls)
-    return [_local_text_vector(t) for t in texts]
+    # 3. Deterministic Local Hashing Vectorizer (100% offline, zero external latency)
+    if generated_vectors is None or len(generated_vectors) != len(uncached_texts):
+        generated_vectors = [_local_text_vector(t) for t in uncached_texts]
+
+    # Populate cache and merge into results
+    for idx, vec in zip(uncached_indices, generated_vectors):
+        results[idx] = vec
+        key = hashlib.md5(texts[idx].encode("utf-8")).hexdigest()
+        if len(_embedding_cache) < MAX_CACHE_SIZE:
+            _embedding_cache[key] = vec
+
+    return [r for r in results if r is not None]
 
 
 async def _get_openai_embeddings(texts: list[str], api_key: str) -> list[list[float]]:
     url = "https://api.openai.com/v1/embeddings"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {"input": texts, "model": "text-embedding-3-small"}
-    async with httpx.AsyncClient(timeout=8.0) as client:
-        res = await client.post(url, headers=headers, json=payload)
-        res.raise_for_status()
-        data = res.json().get("data", [])
-        return [item["embedding"] for item in sorted(data, key=lambda x: x["index"])]
+    client = get_rag_client()
+    res = await client.post(url, headers=headers, json=payload)
+    res.raise_for_status()
+    data = res.json().get("data", [])
+    return [item["embedding"] for item in sorted(data, key=lambda x: x["index"])]
 
 
 async def _get_gemini_embeddings(texts: list[str], api_key: str) -> list[list[float]]:
-    # Batch embed via Gemini API
     url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key={api_key}"
     requests_payload = [
         {"model": "models/text-embedding-004", "content": {"parts": [{"text": t}]}}
         for t in texts
     ]
-    async with httpx.AsyncClient(timeout=8.0) as client:
-        res = await client.post(url, json={"requests": requests_payload})
-        res.raise_for_status()
-        embeddings = res.json().get("embeddings", [])
-        return [item["values"] for item in embeddings]
+    client = get_rag_client()
+    res = await client.post(url, json={"requests": requests_payload})
+    res.raise_for_status()
+    embeddings = res.json().get("embeddings", [])
+    return [item["values"] for item in embeddings]
 
 
 def _local_text_vector(text: str, dim: int = 128) -> list[float]:
@@ -67,18 +109,15 @@ def _local_text_vector(text: str, dim: int = 128) -> list[float]:
         return vec
 
     for word in words:
-        # Word hash
         h = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16)
         vec[h % dim] += 1.0
 
-        # Subword 3-grams
         if len(word) >= 3:
             for i in range(len(word) - 2):
                 tri = word[i : i + 3]
                 th = int(hashlib.md5(tri.encode("utf-8")).hexdigest(), 16)
                 vec[th % dim] += 0.5
 
-    # L2 normalize
     norm = math.sqrt(sum(v * v for v in vec))
     if norm > 0.0:
         vec = [v / norm for v in vec]

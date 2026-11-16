@@ -8,11 +8,15 @@ import {
   Download,
   LayoutGrid,
   Layers,
+  Lock,
+  LogIn,
   PanelLeft,
   Plus,
   SlidersHorizontal,
 } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
+import { useAppAuth } from "@/components/AuthProvider";
 import type { LayoutMode, ModelInfo } from "@/lib/types";
 
 interface ModelPickerBarProps {
@@ -48,6 +52,7 @@ export function ModelPickerBar({
   onOpenKnowledgeModal,
   onExportChat,
 }: ModelPickerBarProps) {
+  const { isSignedIn } = useAppAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [sysOpen, setSysOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -325,6 +330,17 @@ export function ModelPickerBar({
                 </div>
               )}
             </div>
+          )}
+
+          {!isSignedIn && (
+            <Link
+              href="/sign-in"
+              className="flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-gradient-to-r from-indigo-600/20 to-violet-600/20 px-2.5 py-1.5 text-xs font-semibold text-indigo-300 transition hover:border-indigo-500 hover:text-white shadow-sm"
+              title="Sign in to unlock model broadcasting"
+            >
+              <Lock className="h-3.5 w-3.5 text-indigo-400 animate-pulse" />
+              <span className="hidden sm:inline">Sign In</span>
+            </Link>
           )}
         </div>
       </div>
